@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Rock-Paper-Scissors (PvE)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    header {
+      padding: 16px;
+      text-align: center;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.8rem;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      justify-content: center;
+      padding: 16px;
+      max-width: 1200px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .card {
+      background: #020617;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      border: 1px solid #1f2937;
+    }
+    .left, .right {
+      flex: 1 1 320px;
+    }
+    button {
+      margin-top: 12px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: none;
+      background: #22c55e;
+      color: #022c22;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #video-container {
+      position: relative;
+      width: 480px;
+      max-width: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #1f2937;
+    }
+    #video, #canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    #countdown {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: rgba(15, 23, 42, 0.8);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 0.95rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      background: #1f2937;
+      margin-right: 4px;
+    }
+    .log {
+      max-height: 240px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+      padding-right: 6px;
+    }
+    .log-entry {
+      margin-bottom: 4px;
+      color: #9ca3af;
+    }
+    .result-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      margin-left: 6px;
+    }
+    .result-win { background: #22c55e33; color: #bbf7d0; }
+    .result-lose { background: #ef444433; color: #fecaca; }
+    .result-tie { background: #4b556333; color: #e5e7eb; }
+    #fpsDisplay {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15, 23, 42, 0.8);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI Rock-Paper-Scissors (PvE)</h1>
+    <p style="color:#9ca3af;font-size:0.9rem;">
+      Play against the AI using your real hand gesture · MediaPipe + Flask
+    </p>
+  </header>
+
+  <div class="container">
+    <div class="left card">
+      <div id="video-container">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="fpsDisplay">FPS: -</div>
+      <div id="countdown">-</div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <button id="playBtn">Play Round</button>
+      </div>
+
+      <div id="status"></div>
+    </div>
+
+    <div class="right card">
+      <h3 style="margin-top:0;">Round Result</h3>
+      <div id="resultPanel">
+        <div>Your move: <strong id="yourMove">-</strong></div>
+        <div>Bot move: <strong id="botMove">-</strong></div>
+        <div style="margin-top:8px;">Outcome: <strong id="outcome">-</strong></div>
+      </div>
+
+      <h3 style="margin-top:16px;">Log</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <!-- MediaPipe (hands + drawing utils + camera) from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+  <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const countdownEl = document.getElementById('countdown');
+    const playBtn = document.getElementById('playBtn');
+    const statusDiv = document.getElementById('status');
+    const logDiv = document.getElementById('log');
+
+    const yourMoveEl = document.getElementById('yourMove');
+    const botMoveEl = document.getElementById('botMove');
+    const outcomeEl = document.getElementById('outcome');
+    const fpsEl = document.getElementById('fpsDisplay');
+    let lastFrameTime = performance.now();
+    let fps = 0;
+
+    let countdownInterval = null;
+
+    function log(message) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      const ts = new Date().toLocaleTimeString();
+      entry.textContent = '[' + ts + '] ' + message;
+      logDiv.prepend(entry);
+    }
+
+    function startCountdown(duration) {
+      if (countdownInterval) clearInterval(countdownInterval);
+
+      let remaining = duration;
+      countdownEl.textContent = remaining;
+      statusDiv.textContent = 'Get ready...';
+
+      countdownInterval = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          countdownEl.textContent = 'Shoot!';
+          clearInterval(countdownInterval);
+          setTimeout(() => {
+            countdownEl.textContent = '-';
+          }, 500);
+          captureAndSendFrame();
+        } else {
+          countdownEl.textContent = remaining;
+        }
+      }, 1000);
+    }
+
+    function captureAndSendFrame() {
+      const width = videoElement.videoWidth;
+      const height = videoElement.videoHeight;
+      if (!width || !height) {
+        log('Video not ready');
+        statusDiv.textContent = 'Video not ready or camera blocked.';
+        return;
+      }
+      canvasElement.width = width;
+      canvasElement.height = height;
+
+      // Lấy frame hiện tại
+      canvasCtx.drawImage(videoElement, 0, 0, width, height);
+      const dataUrl = canvasElement.toDataURL('image/jpeg', 0.8);
+
+      log('Sending frame to server...');
+      statusDiv.textContent = 'Processing...';
+
+      fetch('/predict', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ image: dataUrl })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          statusDiv.textContent = 'Error: ' + data.error;
+          log('Error: ' + data.error);
+          return;
+        }
+        yourMoveEl.textContent = data.your_move;
+        botMoveEl.textContent = data.bot_move;
+        outcomeEl.textContent = data.outcome.toUpperCase();
+
+        outcomeEl.className = '';
+        if (data.outcome === 'win') outcomeEl.classList.add('result-win', 'result-tag');
+        else if (data.outcome === 'lose') outcomeEl.classList.add('result-lose', 'result-tag');
+        else outcomeEl.classList.add('result-tie', 'result-tag');
+
+        statusDiv.textContent = 'Done. Play again!';
+        log('Result: you=' + data.your_move + ', bot=' + data.bot_move + ', outcome=' + data.outcome);
+      })
+      .catch(err => {
+        console.error(err);
+        statusDiv.textContent = 'Request failed.';
+        log('Request failed: ' + err);
+      });
+    }
+
+    // ===== MediaPipe Hands for visualization =====
+    function onResults(results) {
+      if (!results || !results.image) return;
+        
+      canvasElement.width = results.image.width;
+      canvasElement.height = results.image.height;
+        
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        
+      if (results.multiHandLandmarks) {
+        for (const landmarks of results.multiHandLandmarks) {
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS);
+          drawLandmarks(canvasCtx, landmarks);
+        }
+      }
+      canvasCtx.restore();
+    
+      // ==== ĐO FPS ====
+      const now = performance.now();
+      const delta = now - lastFrameTime;    // ms giữa 2 frame
+      fps = 1000 / delta;
+      lastFrameTime = now;
+      fpsEl.textContent = 'FPS: ' + fps.toFixed(1);
+    }
+
+
+    const hands = new Hands({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+      }
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    // Quan trọng: gắn callback
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+
+    playBtn.addEventListener('click', () => {
+      startCountdown(3);
+    });
+  </script>
+</body>
+</html>

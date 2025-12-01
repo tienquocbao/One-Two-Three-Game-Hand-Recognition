@@ -1,0 +1,4 @@
+flask 
+flask-socketio 
+mediapipe 
+opencv-python
